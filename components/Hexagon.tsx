@@ -1,14 +1,16 @@
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Group, RegularPolygon, Text, Rect } from 'react-konva';
-import { Hex, Entity, EntityType } from '../types';
+import { Hex } from '../types';
 import { HEX_SIZE } from '../constants';
 import { getSecondsToGrow } from '../services/hexUtils';
+import { useGameStore } from '../store';
 
-interface HexagonProps {
+// --- VISUAL COMPONENT (Pure) ---
+interface HexagonVisualProps {
   hex: Hex;
   isPlayerNeighbor: boolean;
-  onClick: () => void;
+  onHexClick: (q: number, r: number) => void;
 }
 
 // Visual Color Table
@@ -26,7 +28,7 @@ const LEVEL_COLORS: Record<number, { fill: string; stroke: string }> = {
   10: { fill: '#4c1d95', stroke: '#a855f7' }, 
 };
 
-const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onClick }) => {
+const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerNeighbor, onHexClick }) => {
   // Cartesian Coordinates for Pointy Top Hexes
   const x = HEX_SIZE * (3/2 * hex.q);
   const y = HEX_SIZE * Math.sqrt(3) * (hex.r + hex.q / 2);
@@ -51,23 +53,32 @@ const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onC
   const neededSeconds = getSecondsToGrow(targetLevel) || 1;
   const progressPercent = Math.min(1, hex.progress / neededSeconds);
 
+  // Optimize handler to avoid creating function in render
+  const handleClick = () => {
+    if (isPlayerNeighbor) {
+      onHexClick(hex.q, hex.r);
+    }
+  };
+
   return (
     <Group 
       x={x} 
       y={y} 
-      onClick={isPlayerNeighbor ? onClick : undefined}
-      onTap={isPlayerNeighbor ? onClick : undefined}
+      onClick={handleClick}
+      onTap={handleClick}
       listening={isPlayerNeighbor} // Optimization: only interactive hexes listen to events
     >
       {/* 2.5D Depth Layer (Shadow/Side) */}
       <RegularPolygon
         sides={6}
         radius={HEX_SIZE}
-        fill="#020617" // Dark shadow
-        y={8} // Offset downwards for depth
+        fill="#020617" 
+        y={8} 
         opacity={0.6}
-        rotation={30} // CRITICAL: Rotated to match Pointy Top coordinate math
+        rotation={30}
         listening={false}
+        perfectDrawEnabled={false} // Optimization: Disable expensive hit detection pixels
+        shadowForStrokeEnabled={false}
       />
       
       {/* Main Tile */}
@@ -81,7 +92,10 @@ const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onC
         shadowColor={strokeColor}
         shadowBlur={hex.maxLevel >= 5 ? 15 : 0}
         shadowOpacity={0.6}
-        rotation={30} // CRITICAL: Rotated to match Pointy Top coordinate math
+        shadowEnabled={hex.maxLevel >= 5} // Optimization: Only render shadow for high levels
+        shadowForStrokeEnabled={false}
+        rotation={30}
+        perfectDrawEnabled={false} // Optimization
       />
 
       {/* Level Text */}
@@ -97,6 +111,7 @@ const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onC
         listening={false}
         shadowColor="black"
         shadowBlur={2}
+        perfectDrawEnabled={false}
       />
 
       {/* Progress Bar (Canvas) */}
@@ -108,6 +123,7 @@ const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onC
             height={4}
             fill="rgba(0,0,0,0.6)"
             cornerRadius={2}
+            perfectDrawEnabled={false}
           />
           <Rect
             x={-12}
@@ -115,6 +131,7 @@ const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onC
             height={4}
             fill="#10b981"
             cornerRadius={2}
+            perfectDrawEnabled={false}
           />
         </Group>
       )}
@@ -122,4 +139,31 @@ const Hexagon: React.FC<HexagonProps> = React.memo(({ hex, isPlayerNeighbor, onC
   );
 });
 
-export default Hexagon;
+// --- SMART WRAPPER (Optimization) ---
+// This component subscribes to the store for a specific hex. 
+// If the global grid updates, but this specific hex data hasn't changed (same reference),
+// this component will NOT re-render.
+interface SmartHexagonProps {
+  id: string;
+  isPlayerNeighbor: boolean;
+  onHexClick: (q: number, r: number) => void;
+}
+
+const SmartHexagon: React.FC<SmartHexagonProps> = React.memo(({ id, isPlayerNeighbor, onHexClick }) => {
+  // Select ONLY the hex for this ID.
+  // Because 'tick' uses immutable updates, if this specific hex wasn't modified,
+  // grid[id] returns the exact same object reference, preventing re-render.
+  const hex = useGameStore(state => state.grid[id]);
+
+  if (!hex) return null;
+
+  return (
+    <HexagonVisual 
+      hex={hex} 
+      isPlayerNeighbor={isPlayerNeighbor} 
+      onHexClick={onHexClick} 
+    />
+  );
+});
+
+export default SmartHexagon;

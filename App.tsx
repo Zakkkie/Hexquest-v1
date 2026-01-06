@@ -1,16 +1,18 @@
 
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
 import { Stage, Layer } from 'react-konva';
 import Konva from 'konva';
 import { useGameStore } from './store';
 import { getHexKey, getNeighbors, checkGrowthCondition, getSecondsToGrow } from './services/hexUtils';
-import Hexagon from './components/Hexagon';
+import Hexagon from './components/Hexagon'; // Now imports SmartHexagon by default
 import Unit from './components/Unit';
 import { 
-  AlertCircle, Layers, Pause, Play, Trophy, Coins, Footprints, Medal, RefreshCcw, Zap 
+  AlertCircle, Layers, Pause, Play, Trophy, Coins, Footprints, Medal, RefreshCcw, Zap, AlertTriangle 
 } from 'lucide-react';
-import { UPGRADE_LOCK_QUEUE_SIZE, EXCHANGE_RATE_COINS_PER_MOVE } from './constants';
+import { UPGRADE_LOCK_QUEUE_SIZE, EXCHANGE_RATE_COINS_PER_MOVE, HEX_SIZE } from './constants';
 import { Hex } from './types';
+
+const VIEWPORT_PADDING = 150; // Pixels around the screen to render to avoid pop-in
 
 const App: React.FC = () => {
   // Window size state
@@ -29,14 +31,22 @@ const App: React.FC = () => {
   // Select state slices
   const { 
     grid, player, bot, 
-    gameStatus, messageLog, isPlayerGrowing, 
-    tick, movePlayer, togglePlayerGrowth, rechargeMove 
+    messageLog, isPlayerGrowing, toast,
+    tick, movePlayer, togglePlayerGrowth, rechargeMove, hideToast
   } = useGameStore();
 
   useEffect(() => {
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [tick]);
+
+  // Toast Auto-Hide
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => hideToast(), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast, hideToast]);
 
   // Handle Resize
   useEffect(() => {
@@ -99,7 +109,35 @@ const App: React.FC = () => {
   };
 
   // Neighbors calculation for interactivity
-  const playerNeighborKeys = getNeighbors(player.q, player.r).map(n => getHexKey(n.q, n.r));
+  const playerNeighborKeys = useMemo(() => {
+    return new Set(getNeighbors(player.q, player.r).map(n => getHexKey(n.q, n.r)));
+  }, [player.q, player.r]);
+
+  // --- OPTIMIZATION: VIEWPORT CULLING ---
+  // We calculate which Hex IDs are visible.
+  // We still depend on `grid` structure, but `Hexagon` component (Smart) 
+  // will only re-render if the specific hex data changes.
+  const visibleHexIds = useMemo(() => {
+    const visibleIds: string[] = [];
+    const allHexes = Object.values(grid) as Hex[];
+    
+    // Invert transform to find world coordinates of the viewport bounds
+    const minX = -viewState.x / viewState.scale - VIEWPORT_PADDING / viewState.scale;
+    const minY = -viewState.y / viewState.scale - VIEWPORT_PADDING / viewState.scale;
+    const maxX = (dimensions.width - viewState.x) / viewState.scale + VIEWPORT_PADDING / viewState.scale;
+    const maxY = (dimensions.height - viewState.y) / viewState.scale + VIEWPORT_PADDING / viewState.scale;
+
+    for (const hex of allHexes) {
+      // Calculate Hex Pixel Position (matches Hexagon.tsx math)
+      const px = HEX_SIZE * (3/2 * hex.q);
+      const py = HEX_SIZE * Math.sqrt(3) * (hex.r + hex.q / 2);
+
+      if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+        visibleIds.push(hex.id);
+      }
+    }
+    return visibleIds;
+  }, [grid, viewState, dimensions]);
 
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none relative">
@@ -118,13 +156,13 @@ const App: React.FC = () => {
           scaleY={viewState.scale}
         >
           <Layer>
-            {/* Render Grid */}
-            {Object.values(grid).map((hex: Hex) => (
+            {/* Render Only Visible Grid via Smart Components */}
+            {visibleHexIds.map((id) => (
               <Hexagon 
-                key={hex.id} 
-                hex={hex} 
-                isPlayerNeighbor={playerNeighborKeys.includes(hex.id)}
-                onClick={() => movePlayer(hex.q, hex.r)}
+                key={id} 
+                id={id} // Pass ID instead of object
+                isPlayerNeighbor={playerNeighborKeys.has(id)}
+                onHexClick={movePlayer} // Pass stable function
               />
             ))}
             
@@ -136,6 +174,16 @@ const App: React.FC = () => {
       </div>
 
       {/* --- UI OVERLAYS (Z-INDEX > 0) --- */}
+
+      {/* POPUP TOAST MESSAGE */}
+      {toast && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 animate-bounce">
+          <div className="bg-red-950/90 border border-red-500 text-red-100 px-6 py-3 rounded-2xl shadow-[0_0_30px_rgba(239,68,68,0.6)] backdrop-blur-md flex items-center gap-3">
+             <AlertTriangle className="w-6 h-6 text-red-500" />
+             <span className="text-sm font-black uppercase tracking-wider">{toast.message}</span>
+          </div>
+        </div>
+      )}
 
       {/* Top HUD */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex gap-6 px-10 py-3 bg-slate-900/90 backdrop-blur-3xl rounded-full border border-slate-800 shadow-2xl items-center pointer-events-auto">
@@ -176,11 +224,11 @@ const App: React.FC = () => {
         <div className="bg-slate-900/90 backdrop-blur-3xl p-3 rounded-3xl border border-slate-800 shadow-[0_15px_45px_rgba(0,0,0,0.7)] w-full flex flex-col gap-2">
           <button 
             onClick={togglePlayerGrowth}
-            disabled={!growthCondition.canGrow && !isPlayerGrowing}
+            // Removed 'disabled' so we can show Toast on click if condition fails
             className={`w-full py-3 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all active:scale-95 border-b-4
               ${isPlayerGrowing 
                 ? 'bg-red-600 hover:bg-red-500 border-red-900 text-white' 
-                : 'bg-amber-500 hover:bg-amber-400 disabled:opacity-5 border-amber-800 text-slate-950'}`}
+                : (!growthCondition.canGrow ? 'bg-slate-700 text-slate-500 border-slate-900 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-400 border-amber-800 text-slate-950')}`}
           >
             {isPlayerGrowing ? <Pause className="w-4 h-4 fill-current"/> : <Play className="w-4 h-4 fill-current"/>}
             {isPlayerGrowing ? 'STOP' : 'GROWTH'}

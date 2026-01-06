@@ -15,6 +15,8 @@ interface GameActions {
   rechargeMove: () => void;
   movePlayer: (q: number, r: number) => void;
   tick: () => void;
+  showToast: (message: string, type: 'error' | 'success' | 'info') => void;
+  hideToast: () => void;
 }
 
 type GameStore = GameState & GameActions;
@@ -64,8 +66,30 @@ export const useGameStore = create<GameStore>((set, get) => {
     lastBotActionTime: Date.now(),
     isPlayerGrowing: false,
     isBotGrowing: false,
+    toast: null,
 
-    togglePlayerGrowth: () => set(state => ({ isPlayerGrowing: !state.isPlayerGrowing })),
+    showToast: (message, type) => set({ toast: { message, type, timestamp: Date.now() } }),
+    hideToast: () => set({ toast: null }),
+
+    togglePlayerGrowth: () => set(state => {
+      // If turning ON, check condition first
+      if (!state.isPlayerGrowing) {
+        const hex = state.grid[getHexKey(state.player.q, state.player.r)];
+        if (hex) {
+          const condition = checkGrowthCondition(hex, state.player);
+          if (!condition.canGrow) {
+             return { 
+               toast: { 
+                 message: condition.reason || "Growth Denied", 
+                 type: 'error', 
+                 timestamp: Date.now() 
+               } 
+             };
+          }
+        }
+      }
+      return { isPlayerGrowing: !state.isPlayerGrowing };
+    }),
 
     rechargeMove: () => set(state => {
       if (state.player.coins < EXCHANGE_RATE_COINS_PER_MOVE) return state;
@@ -123,7 +147,7 @@ export const useGameStore = create<GameStore>((set, get) => {
         const hex = newGrid[key];
         
         if (!hex || !checkGrowthCondition(hex, entity).canGrow) {
-           // If condition fails during growth (e.g. somehow logic changed), stop
+           // Silent stop if invalid during tick
            return { entity, isGrowing: false, logs: [] };
         }
 
@@ -148,7 +172,7 @@ export const useGameStore = create<GameStore>((set, get) => {
               } else {
                 // L2+ requires full cycle, consumes it
                 updatedEntity.recentUpgrades = [];
-                // REWARD CHANGE: Bonus is Level Squared
+                // Bonus is Level Squared
                 finalCoins = targetLevel * targetLevel;
                 currentLogs.push(`RECORD BREAK L${targetLevel}! +${finalCoins}© Cycle Consumed.`);
               }
@@ -163,12 +187,13 @@ export const useGameStore = create<GameStore>((set, get) => {
            updatedEntity.moves += 1;
            newGrid[key] = newHex;
 
-           // LOGIC CHANGE: Continue growing if we haven't reached the max cap yet
-           // If we just reached the max level (restoration complete) OR broke a record, we stop to let user decide next step
+           // Continue growing if we haven't reached the max cap yet
            const reachedCap = targetLevel >= newHex.maxLevel;
            
            return { entity: updatedEntity, isGrowing: !reachedCap, logs: currentLogs };
         } else {
+           // IMMUTABLE UPDATE CRITICAL FOR PERFORMANCE:
+           // Only this specific hex key changes reference. Others remain same.
            newGrid[key] = { ...hex, progress: hex.progress + 1 };
            return { entity, isGrowing: true, logs: [] };
         }

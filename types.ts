@@ -1,3 +1,4 @@
+
 export interface Coordinates {
   q: number;
   r: number;
@@ -30,6 +31,12 @@ export interface Entity {
   recentUpgrades: string[]; // Queue of Hex IDs where maxLevel was increased
 }
 
+export interface ToastMessage {
+  message: string;
+  type: 'error' | 'success' | 'info';
+  timestamp: number;
+}
+
 export interface GameState {
   grid: Record<string, Hex>; // Key format: "q,r"
   player: Entity;
@@ -40,4 +47,5 @@ export interface GameState {
   lastBotActionTime: number;
   isPlayerGrowing: boolean;
   isBotGrowing: boolean;
+  toast: ToastMessage | null;
 }
