@@ -1,9 +1,9 @@
 
 import React, { useEffect, useCallback, useState, useMemo } from 'react';
-import { Stage, Layer } from 'react-konva';
+import { Stage, Layer, Line } from 'react-konva';
 import Konva from 'konva';
 import { useGameStore } from './store';
-import { getHexKey, getNeighbors, checkGrowthCondition, getSecondsToGrow } from './services/hexUtils';
+import { getHexKey, getNeighbors, checkGrowthCondition, getSecondsToGrow, hexToPixel } from './services/hexUtils';
 import Hexagon from './components/Hexagon'; // Now imports SmartHexagon by default
 import Unit from './components/Unit';
 import { 
@@ -108,15 +108,16 @@ const App: React.FC = () => {
     }));
   };
 
-  // Neighbors calculation for interactivity
-  const playerNeighborKeys = useMemo(() => {
-    return new Set(getNeighbors(player.q, player.r).map(n => getHexKey(n.q, n.r)));
+  // Neighbors calculation for interactivity & Connector Lines
+  const playerNeighbors = useMemo(() => {
+    return getNeighbors(player.q, player.r);
   }, [player.q, player.r]);
 
+  const playerNeighborKeys = useMemo(() => {
+    return new Set(playerNeighbors.map(n => getHexKey(n.q, n.r)));
+  }, [playerNeighbors]);
+
   // --- OPTIMIZATION: VIEWPORT CULLING ---
-  // We calculate which Hex IDs are visible.
-  // We still depend on `grid` structure, but `Hexagon` component (Smart) 
-  // will only re-render if the specific hex data changes.
   const visibleHexIds = useMemo(() => {
     const visibleIds: string[] = [];
     const allHexes = Object.values(grid) as Hex[];
@@ -138,6 +139,40 @@ const App: React.FC = () => {
     }
     return visibleIds;
   }, [grid, viewState, dimensions]);
+
+  // Connector Lines Logic
+  const connectorLines = useMemo(() => {
+    const start = hexToPixel(player.q, player.r);
+    return playerNeighbors.map(neighbor => {
+       const key = getHexKey(neighbor.q, neighbor.r);
+       const hex = grid[key];
+       const isBot = neighbor.q === bot.q && neighbor.r === bot.r;
+       const isLocked = hex && hex.maxLevel > player.playerLevel;
+       
+       if (isBot) return null; // Don't draw line to bot (obstacle)
+       
+       const end = hexToPixel(neighbor.q, neighbor.r);
+       
+       // Affordability Check
+       // Cost is 1. 
+       const canAfford = player.moves >= 1 || player.coins >= EXCHANGE_RATE_COINS_PER_MOVE;
+       const color = canAfford ? '#3b82f6' : '#ef4444'; // Blue if affordable, Red if not
+       const dash = [5, 5];
+
+       return (
+         <Line
+           key={`conn-${key}`}
+           points={[start.x, start.y, end.x, end.y]}
+           stroke={color}
+           strokeWidth={2}
+           dash={dash}
+           opacity={isLocked ? 0.2 : 0.6} // Dim if locked
+           listening={false}
+         />
+       );
+    });
+  }, [player.q, player.r, player.moves, player.coins, player.playerLevel, playerNeighbors, grid, bot.q, bot.r]);
+
 
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none relative">
@@ -162,10 +197,14 @@ const App: React.FC = () => {
                 key={id} 
                 id={id} // Pass ID instead of object
                 isPlayerNeighbor={playerNeighborKeys.has(id)}
+                playerRank={player.playerLevel} // Pass current player rank for lock visualization
                 onHexClick={movePlayer} // Pass stable function
               />
             ))}
             
+            {/* Connector Lines Layer - Draw on top of grid but below units */}
+            {connectorLines}
+
             {/* Render Units on top */}
             <Unit q={player.q} r={player.r} type={player.type} />
             <Unit q={bot.q} r={bot.r} type={bot.type} />

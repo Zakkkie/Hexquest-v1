@@ -10,6 +10,7 @@ import { useGameStore } from '../store';
 interface HexagonVisualProps {
   hex: Hex;
   isPlayerNeighbor: boolean;
+  playerRank: number;
   onHexClick: (q: number, r: number) => void;
 }
 
@@ -28,7 +29,7 @@ const LEVEL_COLORS: Record<number, { fill: string; stroke: string }> = {
   10: { fill: '#4c1d95', stroke: '#a855f7' }, 
 };
 
-const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerNeighbor, onHexClick }) => {
+const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerNeighbor, playerRank, onHexClick }) => {
   // Cartesian Coordinates for Pointy Top Hexes
   const x = HEX_SIZE * (3/2 * hex.q);
   const y = HEX_SIZE * Math.sqrt(3) * (hex.r + hex.q / 2);
@@ -52,6 +53,7 @@ const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerN
   const targetLevel = hex.currentLevel + 1;
   const neededSeconds = getSecondsToGrow(targetLevel) || 1;
   const progressPercent = Math.min(1, hex.progress / neededSeconds);
+  const isLocked = hex.maxLevel > playerRank;
 
   // Optimize handler to avoid creating function in render
   const handleClick = () => {
@@ -98,24 +100,48 @@ const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerN
         perfectDrawEnabled={false} // Optimization
       />
 
-      {/* Level Text */}
+      {/* Lock Overlay */}
+      {isLocked && (
+        <Group listening={false}>
+          <RegularPolygon
+            sides={6}
+            radius={HEX_SIZE}
+            fill="#000000"
+            opacity={0.5}
+            rotation={30}
+            perfectDrawEnabled={false}
+          />
+          <Text
+            text="🔒"
+            fontSize={16}
+            x={-8}
+            y={-8}
+            fill="#ef4444"
+            perfectDrawEnabled={false}
+            shadowColor="black"
+            shadowBlur={2}
+          />
+        </Group>
+      )}
+
+      {/* Level Text (Hide if locked to reduce clutter, or keep it?) -> Keep it so they know what rank is needed */}
       <Text
         text={`${hex.currentLevel}/${hex.maxLevel}`}
         fontSize={10}
-        fill="#ffffff"
+        fill={isLocked ? "#94a3b8" : "#ffffff"}
         fontStyle="bold"
         align="center"
         width={HEX_SIZE * 2}
         x={-HEX_SIZE}
-        y={-5}
+        y={isLocked ? 10 : -5} // Shift down if lock is present
         listening={false}
         shadowColor="black"
         shadowBlur={2}
         perfectDrawEnabled={false}
       />
 
-      {/* Progress Bar (Canvas) */}
-      {isGrowing && (
+      {/* Progress Bar (Canvas) - Only show if not locked */}
+      {isGrowing && !isLocked && (
         <Group y={14} listening={false}>
           <Rect
             x={-12}
@@ -140,19 +166,15 @@ const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerN
 });
 
 // --- SMART WRAPPER (Optimization) ---
-// This component subscribes to the store for a specific hex. 
-// If the global grid updates, but this specific hex data hasn't changed (same reference),
-// this component will NOT re-render.
 interface SmartHexagonProps {
   id: string;
   isPlayerNeighbor: boolean;
+  playerRank: number; // New Prop
   onHexClick: (q: number, r: number) => void;
 }
 
-const SmartHexagon: React.FC<SmartHexagonProps> = React.memo(({ id, isPlayerNeighbor, onHexClick }) => {
+const SmartHexagon: React.FC<SmartHexagonProps> = React.memo(({ id, isPlayerNeighbor, playerRank, onHexClick }) => {
   // Select ONLY the hex for this ID.
-  // Because 'tick' uses immutable updates, if this specific hex wasn't modified,
-  // grid[id] returns the exact same object reference, preventing re-render.
   const hex = useGameStore(state => state.grid[id]);
 
   if (!hex) return null;
@@ -161,6 +183,7 @@ const SmartHexagon: React.FC<SmartHexagonProps> = React.memo(({ id, isPlayerNeig
     <HexagonVisual 
       hex={hex} 
       isPlayerNeighbor={isPlayerNeighbor} 
+      playerRank={playerRank}
       onHexClick={onHexClick} 
     />
   );

@@ -7,7 +7,7 @@ import {
 } from './constants';
 import { 
   getHexKey, getNeighbors, checkGrowthCondition, getSecondsToGrow, 
-  calculateReward, calculateBotMove 
+  calculateReward, calculateBotMove, findPath 
 } from './services/hexUtils';
 
 interface GameActions {
@@ -103,17 +103,72 @@ export const useGameStore = create<GameStore>((set, get) => {
     }),
 
     movePlayer: (tq, tr) => set(state => {
-      if (state.player.moves <= 0 || (tq === state.bot.q && tr === state.bot.r)) return state;
+      const { player, bot, grid } = state;
+
+      // 1. Basic Validation
+      if (tq === player.q && tr === player.r) return state; // Clicked self
       
-      const newGrid = { ...state.grid };
-      const oldKey = getHexKey(state.player.q, state.player.r);
+      const targetKey = getHexKey(tq, tr);
+      const targetHex = grid[targetKey];
+
+      // 2. Rank Check (Access Denied)
+      if (targetHex && targetHex.maxLevel > player.playerLevel) {
+        return {
+          toast: {
+            message: `ACCESS DENIED: SECTOR L${targetHex.maxLevel} REQUIRES RANK L${targetHex.maxLevel}`,
+            type: 'error',
+            timestamp: Date.now()
+          }
+        };
+      }
+
+      // 3. Pathfinding (Multi-step logic)
+      const path = findPath(
+        { q: player.q, r: player.r },
+        { q: tq, r: tr },
+        grid,
+        player.playerLevel,
+        [{ q: bot.q, r: bot.r }] // Bot is obstacle
+      );
+
+      if (!path) {
+         return {
+           toast: { message: "NO VALID PATH (BLOCKED)", type: 'error', timestamp: Date.now() }
+         };
+      }
+
+      const cost = path.length;
       
-      // Reset current level progress on exit
+      // 4. Affordability Check (Moves + Coins auto-exchange)
+      let availableMoves = player.moves;
+      let availableCoins = player.coins;
+      
+      if (availableMoves >= cost) {
+        availableMoves -= cost;
+      } else {
+        const movesNeeded = cost - availableMoves;
+        availableMoves = 0; // All moves used
+        const coinsNeeded = movesNeeded * EXCHANGE_RATE_COINS_PER_MOVE;
+        
+        if (availableCoins >= coinsNeeded) {
+          availableCoins -= coinsNeeded;
+        } else {
+          return {
+             toast: { message: `INSUFFICIENT RESOURCES. NEED ${cost} MOVES (OR ${coinsNeeded} COINS)`, type: 'error', timestamp: Date.now() }
+          };
+        }
+      }
+
+      // 5. Execute Move
+      const newGrid = { ...grid };
+      const oldKey = getHexKey(player.q, player.r);
+      
+      // Reset current level progress on exit of start hex
       if (newGrid[oldKey]) {
         newGrid[oldKey] = { ...newGrid[oldKey], currentLevel: 0, progress: 0 };
       }
 
-      // Reveal area
+      // Reveal area for destination
       const neighbors = getNeighbors(tq, tr);
       [...neighbors, { q: tq, r: tr }].forEach(n => {
         const key = getHexKey(n.q, n.r);
@@ -122,7 +177,12 @@ export const useGameStore = create<GameStore>((set, get) => {
 
       return {
         grid: newGrid,
-        player: { ...state.player, q: tq, r: tr, moves: state.player.moves - 1 },
+        player: { 
+          ...player, 
+          q: tq, r: tr, 
+          moves: availableMoves,
+          coins: availableCoins
+        },
         isPlayerGrowing: false
       };
     }),

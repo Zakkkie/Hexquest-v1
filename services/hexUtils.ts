@@ -1,6 +1,6 @@
 
 import { Coordinates, Hex, Entity, EntityType } from '../types';
-import { SECONDS_PER_LEVEL_UNIT, UPGRADE_LOCK_QUEUE_SIZE } from '../constants';
+import { SECONDS_PER_LEVEL_UNIT, UPGRADE_LOCK_QUEUE_SIZE, HEX_SIZE } from '../constants';
 
 // --- Coordinate Math ---
 
@@ -9,6 +9,12 @@ export const getHexKey = (q: number, r: number): string => `${q},${r}`;
 export const getCoordinatesFromKey = (key: string): Coordinates => {
   const [q, r] = key.split(',').map(Number);
   return { q, r };
+};
+
+export const hexToPixel = (q: number, r: number): { x: number, y: number } => {
+  const x = HEX_SIZE * (3/2 * q);
+  const y = HEX_SIZE * Math.sqrt(3) * (r + q / 2);
+  return { x, y };
 };
 
 export const cubeDistance = (a: Coordinates, b: Coordinates): number => {
@@ -81,7 +87,65 @@ export const checkGrowthCondition = (
   return { canGrow: true };
 };
 
-// --- Bot Logic ---
+// --- Pathfinding & Bot Logic ---
+
+/**
+ * BFS to find shortest path for Player or Bot
+ */
+export const findPath = (
+  start: Coordinates, 
+  end: Coordinates, 
+  grid: Record<string, Hex>,
+  playerRank: number,
+  obstacles: Coordinates[] // Usually just the opponent
+): Coordinates[] | null => {
+  const startKey = getHexKey(start.q, start.r);
+  const endKey = getHexKey(end.q, end.r);
+  
+  if (startKey === endKey) return null;
+
+  const queue: { coord: Coordinates, path: Coordinates[] }[] = [{ coord: start, path: [] }];
+  const visited = new Set<string>();
+  visited.add(startKey);
+
+  const obstacleKeys = new Set(obstacles.map(o => getHexKey(o.q, o.r)));
+
+  while (queue.length > 0) {
+    const { coord, path } = queue.shift()!;
+    const neighbors = getNeighbors(coord.q, coord.r);
+
+    for (const n of neighbors) {
+      const nKey = getHexKey(n.q, n.r);
+
+      // Check if found target
+      if (nKey === endKey) {
+        // Final check: is target itself valid?
+        // Note: Logic in movePlayer usually checks obstacles/rank before calling this, 
+        // but we double check strict obstacles (units) here.
+        if (obstacleKeys.has(nKey)) return null; 
+        
+        // Rank check for destination
+        const hex = grid[nKey];
+        if (hex && hex.maxLevel > playerRank) return null;
+
+        return [...path, n];
+      }
+
+      if (visited.has(nKey)) continue;
+      if (obstacleKeys.has(nKey)) continue;
+
+      const hex = grid[nKey];
+      // Cannot traverse through Locked Hexes
+      if (hex && hex.maxLevel > playerRank) continue;
+
+      visited.add(nKey);
+      queue.push({ coord: n, path: [...path, n] });
+    }
+  }
+
+  return null; // No path found
+};
+
 
 export const calculateBotMove = (
   bot: Entity, 
@@ -89,7 +153,22 @@ export const calculateBotMove = (
   opponent: Coordinates
 ): Coordinates | null => {
   const neighbors = getNeighbors(bot.q, bot.r);
-  const validNeighbors = neighbors.filter(n => !(n.q === opponent.q && n.r === opponent.r));
+  
+  const validNeighbors = neighbors.filter(n => {
+    // 1. Cannot step on opponent
+    if (n.q === opponent.q && n.r === opponent.r) return false;
+
+    const key = getHexKey(n.q, n.r);
+    const hex = grid[key];
+
+    // 2. LEVEL GATE CHECK: Bot cannot enter hexes higher than its rank
+    // If hex exists and its maxLevel is greater than bot's playerLevel, ignore it.
+    if (hex && hex.maxLevel > bot.playerLevel) {
+      return false;
+    }
+
+    return true;
+  });
   
   const scoredMoves = validNeighbors.map(coord => {
     const key = getHexKey(coord.q, coord.r);
