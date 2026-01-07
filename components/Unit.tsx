@@ -4,6 +4,7 @@ import { Group, Circle, Ring } from 'react-konva';
 import Konva from 'konva';
 import { HEX_SIZE } from '../constants';
 import { EntityType } from '../types';
+import { useGameStore } from '../store';
 
 interface UnitProps {
   q: number;
@@ -13,6 +14,9 @@ interface UnitProps {
 
 const Unit: React.FC<UnitProps> = ({ q, r, type }) => {
   const groupRef = useRef<Konva.Group>(null);
+  
+  // Access user profile for customization
+  const user = useGameStore(state => state.user);
   
   // Calculate target pixel coordinates
   const targetX = HEX_SIZE * (3/2 * q);
@@ -38,7 +42,9 @@ const Unit: React.FC<UnitProps> = ({ q, r, type }) => {
   }, [targetX, targetY]);
 
   const isPlayer = type === EntityType.PLAYER;
-  const color = isPlayer ? '#3b82f6' : '#ef4444';
+  
+  // Use user's avatar color if available and it is the player
+  const color = isPlayer ? (user?.avatarColor || '#3b82f6') : '#ef4444';
 
   return (
     <Group ref={groupRef} listening={false}>

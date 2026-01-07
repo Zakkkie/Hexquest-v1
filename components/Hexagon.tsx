@@ -57,9 +57,8 @@ const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerN
 
   // Optimize handler to avoid creating function in render
   const handleClick = () => {
-    if (isPlayerNeighbor) {
-      onHexClick(hex.q, hex.r);
-    }
+    // Multi-step movement: click anywhere to attempt move
+    onHexClick(hex.q, hex.r);
   };
 
   return (
@@ -68,7 +67,7 @@ const HexagonVisual: React.FC<HexagonVisualProps> = React.memo(({ hex, isPlayerN
       y={y} 
       onClick={handleClick}
       onTap={handleClick}
-      listening={isPlayerNeighbor} // Optimization: only interactive hexes listen to events
+      listening={true} // Allow interaction with all hexes for tooltip/move
     >
       {/* 2.5D Depth Layer (Shadow/Side) */}
       <RegularPolygon

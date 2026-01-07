@@ -120,8 +120,6 @@ export const findPath = (
       // Check if found target
       if (nKey === endKey) {
         // Final check: is target itself valid?
-        // Note: Logic in movePlayer usually checks obstacles/rank before calling this, 
-        // but we double check strict obstacles (units) here.
         if (obstacleKeys.has(nKey)) return null; 
         
         // Rank check for destination
@@ -135,17 +133,32 @@ export const findPath = (
       if (obstacleKeys.has(nKey)) continue;
 
       const hex = grid[nKey];
+      
+      // If the hex exists in grid, we check locks.
+      // If it DOES NOT exist (unexplored), we treat it as traversable for the sake of 1-step logic
+      // if it's the target, but we are traversing THROUGH it.
+      // Usually, pathfinding should only go through known, unlocked hexes.
+      if (!hex) continue; 
+
       // Cannot traverse through Locked Hexes
-      if (hex && hex.maxLevel > playerRank) continue;
+      if (hex.maxLevel > playerRank) continue;
 
       visited.add(nKey);
       queue.push({ coord: n, path: [...path, n] });
     }
   }
 
+  // Fallback: If immediate neighbor is unexplored (not in grid), allow direct move (path length 1)
+  const dist = cubeDistance(start, end);
+  if (dist === 1) {
+    const endKey = getHexKey(end.q, end.r);
+    if (!obstacleKeys.has(endKey)) {
+        return [end];
+    }
+  }
+
   return null; // No path found
 };
-
 
 export const calculateBotMove = (
   bot: Entity, 
